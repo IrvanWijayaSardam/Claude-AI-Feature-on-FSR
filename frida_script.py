@@ -1763,8 +1763,8 @@ def generate_frida_script_from_prompt(prompt):
     """Generate Frida script using Claude CLI with Ghidra MCP integration"""
     
     try:
-        # Get Ghidra analysis context
-        ghidra_context = get_ghidra_analysis_context()
+        # Note: Ghidra context will be obtained by Claude via MCP tools
+        ghidra_context = "Claude will obtain this data directly via MCP tools - use list_functions(), list_strings(), etc."
         
         # Check if Claude CLI is available
         if not is_claude_cli_available():
@@ -1780,9 +1780,9 @@ def generate_frida_script_from_prompt(prompt):
 {prompt}
 
 ## Available Ghidra MCP Commands for Binary Analysis
-You have access to a Ghidra MCP server that can provide detailed binary analysis. Use these commands to get specific information:
+You have access to a Ghidra MCP server that can provide detailed binary analysis. IMPORTANT: Use these MCP tools to get REAL data from the currently loaded binary:
 
-**Available MCP Functions:**
+**Available MCP Functions (USE THESE FIRST):**
 - `list_functions()` - Get all functions in the binary
 - `get_current_function()` - Get currently selected function
 - `get_current_address()` - Get currently selected address
@@ -1796,10 +1796,7 @@ You have access to a Ghidra MCP server that can provide detailed binary analysis
 - `list_imports()` - Get imported functions
 - `list_exports()` - Get exported functions
 
-**Ghidra Server URL:** {GHIDRA_SERVER_URL}
-
-## Context from Ghidra Analysis
-{ghidra_context}
+**CRITICAL: Call these MCP functions FIRST to get real binary data, then generate the Frida script using that actual data.**
 
 ## Task
 Generate a complete, working Frida script based on the user's request above. The script should:
@@ -1835,15 +1832,15 @@ Generate a complete, working Frida script based on the user's request above. The
 **ARM Stability Pattern:**
 ```javascript
 // Always use this pattern for ARM Android
-setTimeout(function() {
-    Java.performNow(function() {
-        try {
+setTimeout(function() {{
+    Java.performNow(function() {{
+        try {{
             // Your hooking code here
-        } catch (e) {
+        }} catch (e) {{
             console.log("ARM Error: " + e.toString());
-        }
-    });
-}, 1000);
+        }}
+    }});
+}}, 1000);
 ```
 
 Please provide only the JavaScript code, no markdown formatting or explanations - just the raw Frida script that can be executed directly.
@@ -2015,21 +2012,21 @@ def attempt_script_autofix(script_path, error_messages, output_log):
         error_summary = '\n'.join(error_messages)
         output_summary = '\n'.join(output_log[-10:]) if output_log else "No additional output"
         
-        fix_prompt = f"""# Frida Script Error Fix Request
+        fix_prompt = """# Frida Script Error Fix Request
 
 ## Original Script (BROKEN)
 ```javascript
-{original_script}
+{}
 ```
 
 ## Error Messages Detected
-{error_summary}
+{}
 
 ## Recent Frida Output Log
-{output_summary}
+{}
 
 ## Ghidra Analysis Context (if available)
-{ghidra_context}
+{}""".format(original_script, error_summary, output_summary, ghidra_context) + f"""
 
 ## Task: Fix the Frida Script
 The above Frida script is producing errors. Please fix the script based on the error messages and output log.
