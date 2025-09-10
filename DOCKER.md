@@ -57,14 +57,27 @@ chmod +x setup-adb.sh
 
 1. **Setup ADB network connection** (see above)
 
-2. **Start Docker Desktop** (make sure it's running)
+2. **Configure Claude CLI Integration (Optional):**
+   
+   **For Docker users - Start Claude Bridge:**
+   ```bash
+   # In a separate terminal, run the bridge on host
+   python claude-bridge.py
+   ```
+   This starts an HTTP bridge at http://localhost:8090 that allows Docker to use your host's Claude CLI.
+   
+   **For native users:**
+   - Ensure `claude` command is available in PATH
+   - No additional setup needed
 
-3. **Build and run the application:**
+3. **Start Docker Desktop** (make sure it's running)
+
+4. **Build and run the application:**
    ```bash
    docker-compose up --build
    ```
 
-4. **Access the application:**
+5. **Access the application:**
    - Open your browser and go to: http://localhost:5000
 
 ## Commands
@@ -115,6 +128,29 @@ This allows you to modify scripts and files on the host machine and they will be
 - **Connection lost**: Device IP might have changed, reconnect with new IP
 - **Permission denied**: Ensure USB debugging is authorized on device
 - **ADB not found**: Install Android SDK Platform Tools on host system
+
+### Claude CLI Integration Issues
+- **"Claude CLI not available"**: 
+  - **Docker**: Start the bridge with `python claude-bridge.py` on host
+  - **Native**: Install Claude CLI and ensure it's in PATH
+- **"Template fallback"**: Claude is disabled, scripts use basic templates instead
+- **"Claude bridge failed"**: Bridge server is not running on host (port 8090)
+- **"Ghidra MCP connection failed"**: Ghidra MCP server is not running
+
+### Claude CLI Bridge Setup
+```bash
+# 1. Ensure Claude CLI is installed on host
+claude --version
+
+# 2. Start the bridge (keep running)
+python claude-bridge.py
+
+# 3. Verify bridge is working
+curl http://localhost:8090/health
+
+# 4. Start Docker container
+docker-compose up --build
+```
 
 ### Verify ADB Connection
 ```bash
