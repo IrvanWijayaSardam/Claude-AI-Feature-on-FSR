@@ -1613,7 +1613,7 @@ def main():
         print("Press CTRL+C to stop this program.")
         
         logging.getLogger('werkzeug').setLevel(logging.ERROR)
-        socketio.run(app, port=port, debug=False if get_device_type() not in ['Windows','Linux'] else False)
+        socketio.run(app, port=port, debug=False if get_device_type() not in ['Windows','Linux'] else False, allow_unsafe_werkzeug=True, host='0.0.0.0')
     
     except KeyboardInterrupt:
         pass
