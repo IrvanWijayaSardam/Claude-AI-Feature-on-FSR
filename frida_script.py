@@ -1779,6 +1779,21 @@ def generate_frida_script_from_prompt(prompt):
 ## User Request
 {prompt}
 
+## Frida JavaScript API Reference
+IMPORTANT: Use ONLY compatible functions from the official Frida JavaScript API documentation at https://frida.re/docs/javascript-api/. 
+
+**Core Frida APIs to use:**
+- `Java.perform()` or `Java.performNow()` for Java operations
+- `Process.setExceptionHandler()` for exception handling
+- `Module.load()`, `Module.findExportByName()` for native functions
+- `Interceptor.attach()`, `Interceptor.replace()` for hooking
+- `Memory.read*()`, `Memory.write*()` for memory operations
+- `NativePointer()`, `ptr()` for pointer handling
+- `Java.use()` for accessing Java classes
+- `Java.cast()`, `Java.retain()`, `Java.unretain()` for object management
+- `setTimeout()` for delayed execution
+- `console.log()` for output
+
 ## Available Ghidra MCP Commands for Binary Analysis
 You have access to a Ghidra MCP server that can provide detailed binary analysis. IMPORTANT: Use these MCP tools to get REAL data from the currently loaded binary:
 
@@ -1863,7 +1878,7 @@ Focus on ARM-compatible, working code that uses actual binary analysis data when
                     ], 
                     capture_output=True, 
                     text=True, 
-                    timeout=60,
+                    timeout=300,  # 5 minutes timeout
                     cwd=os.getcwd()
                     )
                     
@@ -1880,7 +1895,7 @@ Focus on ARM-compatible, working code that uses actual binary analysis data when
                     
                     response = requests.post(f"{CLAUDE_HOST_URL}/generate-script", 
                                            json={"prompt": file_content}, 
-                                           timeout=60)
+                                           timeout=300)  # 5 minutes timeout
                     
                     if response.status_code == 200:
                         generated_script = response.json().get('script', '')
@@ -1968,7 +1983,7 @@ def call_claude_via_bridge(prompt):
         import requests
         response = requests.post(f"{CLAUDE_HOST_URL}/generate-script", 
                                json={"prompt": prompt}, 
-                               timeout=60)
+                               timeout=300)  # 5 minutes timeout
         
         if response.status_code == 200:
             result_data = response.json()
@@ -2086,7 +2101,7 @@ Please provide ONLY the complete fixed JavaScript code, no explanations or markd
                     ], 
                     capture_output=True, 
                     text=True, 
-                    timeout=60,
+                    timeout=300,  # 5 minutes timeout
                     cwd=os.getcwd())
                 else:
                     # Docker environment - use bridge

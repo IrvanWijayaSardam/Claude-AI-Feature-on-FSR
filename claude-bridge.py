@@ -577,6 +577,13 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                 # Try Claude CLI with MCP first, fallback to plain Claude
                 result = None
                 
+                # Create temporary file for prompt (matching frida_script.py approach)
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
+                    temp_file.write(formatted_prompt)
+                    temp_file.flush()
+                    temp_prompt_path = temp_file.name
+                
                 # Method 1: Try with MCP if available
                 global MCP_CONFIG
                 if MCP_CONFIG:
@@ -585,15 +592,15 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                         cmd_args = [
                             CLAUDE_EXECUTABLE, 
                             '--mcp-config', MCP_CONFIG, 
-                            '--print',
+                            '--file', temp_prompt_path,
+                            '--prompt', 'Generate a Frida script based on the request in this file. Return only the JavaScript code.',
                             '--dangerously-skip-permissions'
                         ]
                         result = subprocess.run(
                             cmd_args,
-                            input=formatted_prompt,
                             capture_output=True,
                             text=True,
-                            timeout=120,  # Longer timeout for MCP
+                            timeout=300,  # 5 minutes timeout for MCP
                             cwd=os.getcwd()
                         )
                         
@@ -611,12 +618,13 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                     print(f"[BRIDGE] Falling back to plain Claude CLI...")
                     try:
                         result = subprocess.run([
-                            CLAUDE_EXECUTABLE, '--print'
+                            CLAUDE_EXECUTABLE, 
+                            '--file', temp_prompt_path,
+                            '--prompt', 'Generate a Frida script based on the request in this file. Return only the JavaScript code.'
                         ], 
-                        input=formatted_prompt,
                         capture_output=True, 
                         text=True, 
-                        timeout=60,
+                        timeout=300,  # 5 minutes timeout
                         cwd=os.getcwd())
                         
                         if result.returncode == 0:
@@ -626,6 +634,12 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                     except Exception as e:
                         print(f"[BRIDGE] Plain Claude CLI exception: {e}")
                         result = None
+                
+                # Clean up temp file
+                try:
+                    os.unlink(temp_prompt_path)
+                except:
+                    pass
                 
                 if not result:
                     response = {
