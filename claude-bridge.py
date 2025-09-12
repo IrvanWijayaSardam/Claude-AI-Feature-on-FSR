@@ -13,10 +13,44 @@ import sys
 import urllib.parse
 import shutil
 import glob
+import argparse
+
+def load_env_file(env_path='.env'):
+    """Load environment variables from .env file if it exists"""
+    if not os.path.exists(env_path):
+        return
+    
+    try:
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    os.environ[key] = value
+        print(f"[BRIDGE] Loaded environment variables from {env_path}")
+    except Exception as e:
+        print(f"[BRIDGE] Warning: Could not load {env_path}: {e}")
 
 # Global variables
 CLAUDE_EXECUTABLE = None
 MCP_CONFIG = None
+
+# Configuration (can be overridden via environment variables or command line)
+DEFAULT_CONFIG = {
+    'ghidra_bridge_path': os.environ.get('GHIDRA_BRIDGE_PATH', 'D:/Irvan/Work/MCP/GhidraMCPFrida/bridge_mcp_ghidra.py'),
+    'ghidra_server_url': os.environ.get('GHIDRA_SERVER_URL', 'http://127.0.0.1:8080/'),
+    'jadx_server_path': os.environ.get('JADX_SERVER_PATH', 'D:/Irvan/Work/MCP/JadxMCPServer/jadx-mcp-server-v3.3.0/jadx-mcp-server/jadx_mcp_server.py'),
+    'uv_executable': os.environ.get('UV_EXECUTABLE', 'C:/Users/Evan/.local/bin/uv.exe'),
+    'jadx_working_dir': os.environ.get('JADX_WORKING_DIR', 'D:/Irvan/Work/MCP/JadxMCPServer/jadx-mcp-server-v3.3.0/jadx-mcp-server/'),
+    'jadx_port': os.environ.get('JADX_PORT', '8650'),
+    'bridge_host': os.environ.get('BRIDGE_HOST', '0.0.0.0'),
+    'bridge_port': int(os.environ.get('BRIDGE_PORT', '8090'))
+}
+
+# Runtime configuration (will be updated from args/env)
+CONFIG = DEFAULT_CONFIG.copy()
 
 def find_claude_executable():
     """Find Claude CLI executable on Windows/Linux/Mac"""
@@ -97,7 +131,7 @@ def find_mcp_servers():
     mcp_servers = {}
     
     # Check for Ghidra MCP server
-    ghidra_bridge_path = "D:/Irvan/Work/MCP/GhidraMCPFrida/bridge_mcp_ghidra.py"
+    ghidra_bridge_path = CONFIG['ghidra_bridge_path']
     if os.path.exists(ghidra_bridge_path):
         print(f"[BRIDGE] Found Ghidra MCP server at: {ghidra_bridge_path}")
         mcp_servers["ghidra"] = {
@@ -105,13 +139,13 @@ def find_mcp_servers():
             "args": [
                 ghidra_bridge_path,
                 "--ghidra-server",
-                "http://127.0.0.1:8080/"
+                CONFIG['ghidra_server_url']
             ]
         }
     
     # Check for JADX MCP server
-    jadx_server_path = "D:/Irvan/Work/MCP/JadxMCPServer/jadx-mcp-server-v3.3.0/jadx-mcp-server/jadx_mcp_server.py"
-    uv_path = "C:/Users/Evan/.local/bin/uv.exe"
+    jadx_server_path = CONFIG['jadx_server_path']
+    uv_path = CONFIG['uv_executable']
     
     if os.path.exists(jadx_server_path) and os.path.exists(uv_path):
         print(f"[BRIDGE] Found JADX MCP server at: {jadx_server_path}")
@@ -119,11 +153,11 @@ def find_mcp_servers():
             "command": uv_path,
             "args": [
                 "--directory",
-                "D:/Irvan/Work/MCP/JadxMCPServer/jadx-mcp-server-v3.3.0/jadx-mcp-server/",
+                CONFIG['jadx_working_dir'],
                 "run",
                 "jadx_mcp_server.py",
                 "--jadx-port",
-                "8650"
+                CONFIG['jadx_port']
             ]
         }
     
@@ -589,12 +623,17 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                 if MCP_CONFIG:
                     print(f"[BRIDGE] Trying Claude CLI with MCP config: {MCP_CONFIG}")
                     try:
+                        # Read the prompt from the temp file and pass it directly
+                        with open(temp_prompt_path, 'r') as f:
+                            file_content = f.read()
+                        
+                        full_prompt = f"Generate a Frida script based on this request: {file_content}\n\nReturn only the JavaScript code."
+                        
                         cmd_args = [
                             CLAUDE_EXECUTABLE, 
-                            '--mcp-config', MCP_CONFIG, 
-                            '--file', temp_prompt_path,
-                            '--prompt', 'Generate a Frida script based on the request in this file. Return only the JavaScript code.',
-                            '--dangerously-skip-permissions'
+                            '--mcp-config', MCP_CONFIG,
+                            '--dangerously-skip-permissions',
+                            full_prompt
                         ]
                         result = subprocess.run(
                             cmd_args,
@@ -617,10 +656,15 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                 if not result:
                     print(f"[BRIDGE] Falling back to plain Claude CLI...")
                     try:
+                        # Read the prompt from the temp file and pass it directly
+                        with open(temp_prompt_path, 'r') as f:
+                            file_content = f.read()
+                        
+                        full_prompt = f"Generate a Frida script based on this request: {file_content}\n\nReturn only the JavaScript code."
+                        
                         result = subprocess.run([
                             CLAUDE_EXECUTABLE, 
-                            '--file', temp_prompt_path,
-                            '--prompt', 'Generate a Frida script based on the request in this file. Return only the JavaScript code.'
+                            full_prompt
                         ], 
                         capture_output=True, 
                         text=True, 
@@ -719,10 +763,106 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
             print(f"[BRIDGE] {format % args}")
         pass
 
+def parse_arguments():
+    """Parse command line arguments and update CONFIG"""
+    parser = argparse.ArgumentParser(
+        description="Claude CLI HTTP Bridge for Frida Script Generation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Environment Variables:
+  GHIDRA_BRIDGE_PATH    Path to Ghidra MCP bridge script
+  GHIDRA_SERVER_URL     Ghidra server URL (default: http://127.0.0.1:8080/)
+  JADX_SERVER_PATH      Path to JADX MCP server script
+  UV_EXECUTABLE         Path to UV executable
+  JADX_WORKING_DIR      JADX server working directory
+  JADX_PORT            JADX server port (default: 8650)
+  BRIDGE_HOST          Bridge server host (default: 0.0.0.0)
+  BRIDGE_PORT          Bridge server port (default: 8090)
+  CLAUDE_MCP_CONFIG    Path to custom Claude MCP config file
+
+Examples:
+  python claude-bridge.py
+  python claude-bridge.py --port 9090
+  python claude-bridge.py --ghidra-path /custom/ghidra/bridge.py
+  python claude-bridge.py --env-file custom.env
+        """)
+    
+    parser.add_argument('--host', 
+                       default=CONFIG['bridge_host'],
+                       help=f'Bridge server host (default: {CONFIG["bridge_host"]})')
+    
+    parser.add_argument('--port', type=int,
+                       default=CONFIG['bridge_port'],
+                       help=f'Bridge server port (default: {CONFIG["bridge_port"]})')
+    
+    parser.add_argument('--ghidra-path',
+                       default=CONFIG['ghidra_bridge_path'],
+                       help='Path to Ghidra MCP bridge script')
+    
+    parser.add_argument('--ghidra-url',
+                       default=CONFIG['ghidra_server_url'],
+                       help=f'Ghidra server URL (default: {CONFIG["ghidra_server_url"]})')
+    
+    parser.add_argument('--jadx-path',
+                       default=CONFIG['jadx_server_path'],
+                       help='Path to JADX MCP server script')
+    
+    parser.add_argument('--uv-path',
+                       default=CONFIG['uv_executable'],
+                       help='Path to UV executable')
+    
+    parser.add_argument('--jadx-dir',
+                       default=CONFIG['jadx_working_dir'],
+                       help='JADX server working directory')
+    
+    parser.add_argument('--jadx-port',
+                       default=CONFIG['jadx_port'],
+                       help=f'JADX server port (default: {CONFIG["jadx_port"]})')
+    
+    parser.add_argument('--env-file',
+                       default='.env',
+                       help='Path to .env file (default: .env)')
+    
+    parser.add_argument('--config-info', action='store_true',
+                       help='Show current configuration and exit')
+    
+    args = parser.parse_args()
+    
+    # Load additional .env file if specified
+    if args.env_file != '.env':
+        load_env_file(args.env_file)
+    
+    # Update CONFIG with command line arguments
+    CONFIG['bridge_host'] = args.host
+    CONFIG['bridge_port'] = args.port
+    CONFIG['ghidra_bridge_path'] = args.ghidra_path
+    CONFIG['ghidra_server_url'] = args.ghidra_url
+    CONFIG['jadx_server_path'] = args.jadx_path
+    CONFIG['uv_executable'] = args.uv_path
+    CONFIG['jadx_working_dir'] = args.jadx_dir
+    CONFIG['jadx_port'] = args.jadx_port
+    
+    if args.config_info:
+        print("🔧 Current Configuration:")
+        print("=" * 50)
+        for key, value in CONFIG.items():
+            status = "✅" if (key.endswith('_path') or key.endswith('_executable')) and os.path.exists(value) else "📝"
+            print(f"  {status} {key}: {value}")
+        print("=" * 50)
+        sys.exit(0)
+    
+    return args
+
 if __name__ == '__main__':
+    # Load .env file first (before parsing arguments)
+    load_env_file()
+    
+    # Parse command line arguments and update configuration
+    args = parse_arguments()
+    
     print("🚀 Starting Claude CLI HTTP Bridge (No Dependencies)...")
-    print("📡 Bridge will be available at: http://localhost:8090")
-    print("🔗 Docker containers can access at: http://host.docker.internal:8090")
+    print(f"📡 Bridge will be available at: http://localhost:{CONFIG['bridge_port']}")
+    print(f"🔗 Docker containers can access at: http://host.docker.internal:{CONFIG['bridge_port']}")
     print("💡 Use /health to check status, /generate-script to generate Frida scripts")
     print("⚠️  Make sure Claude CLI is installed and authenticated on this host")
     print()
@@ -805,7 +945,7 @@ if __name__ == '__main__':
         print(f"⚠️  Could not check options: {e}")
     
     # Start HTTP server
-    server_address = ('0.0.0.0', 8090)
+    server_address = (CONFIG['bridge_host'], CONFIG['bridge_port'])
     httpd = HTTPServer(server_address, ClaudeBridgeHandler)
     
     print(f"🎯 Bridge server started on {server_address[0]}:{server_address[1]}")
