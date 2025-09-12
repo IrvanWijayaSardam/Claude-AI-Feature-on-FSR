@@ -44,8 +44,9 @@ if os.path.exists("/.dockerenv"):
     CLAUDE_CLI_COMMAND = None  # Will use HTTP bridge
     CLAUDE_HOST_URL = "http://host.docker.internal:8090"  # Bridge service
 else:
-    # Native environment
-    CLAUDE_CLI_COMMAND = "claude"  # Assumes claude is in PATH
+    # Native environment - also use HTTP bridge to avoid CLI compatibility issues
+    CLAUDE_CLI_COMMAND = None  # Will use HTTP bridge
+    CLAUDE_HOST_URL = "http://localhost:8090"  # Bridge service on same machine
 
 def log_to_fsr_logs(message):
     """Send debug message to FSR Logs on web interface"""
@@ -180,9 +181,9 @@ def suggest_frida_fixes(device_id, architecture):
                     log_to_fsr_logs(f"[DEBUG] Recent available versions: {', '.join(available_versions)}")
                     
                     if client_version in available_versions:
-                        log_to_fsr_logs(f"[DEBUG] ✓ Version {client_version} is available")
+                        log_to_fsr_logs(f"[DEBUG] [OK] Version {client_version} is available")
                     else:
-                        log_to_fsr_logs(f"[WARNING] ✗ Version {client_version} not found in recent releases")
+                        log_to_fsr_logs(f"[WARNING] [X] Version {client_version} not found in recent releases")
                         log_to_fsr_logs(f"[DEBUG] Will use latest version instead")
             except:
                 log_to_fsr_logs(f"[WARNING] Could not check available versions")
@@ -379,7 +380,7 @@ def is_frida_server_running(device_id):
         # Method 1: Check process list (most reliable) - REQUIRED
         result = run_adb_command(["adb", "-s", device_id, "shell", "ps", "-A"], timeout=timeout)
         if "frida-server" in result:
-            log_to_fsr_logs(f"[DEBUG] ✓ Frida server found in process list")
+            log_to_fsr_logs(f"[DEBUG] [OK] Frida server found in process list")
             
             # Get the PID and verify it's actually frida-server
             try:
@@ -397,13 +398,13 @@ def is_frida_server_running(device_id):
                                     user = user_result.strip()
                                     log_to_fsr_logs(f"[DEBUG] Frida server PID {pid} running as user: {user}")
                                     if user == "root":
-                                        log_to_fsr_logs(f"[DEBUG] ✓ Frida server running as root (correct)")
+                                        log_to_fsr_logs(f"[DEBUG] [OK] Frida server running as root (correct)")
                                         return True
                                     elif user == "shell":
-                                        log_to_fsr_logs(f"[WARNING] ⚠ Frida server running as shell (not ideal but functional)")
+                                        log_to_fsr_logs(f"[WARNING] [WARN] Frida server running as shell (not ideal but functional)")
                                         return True
                                     else:
-                                        log_to_fsr_logs(f"[WARNING] ✗ Frida server running as {user} (should be root)")
+                                        log_to_fsr_logs(f"[WARNING] [X] Frida server running as {user} (should be root)")
                                         return False
                                 else:
                                     log_to_fsr_logs(f"[WARNING] Invalid PID format: {pid}")
@@ -412,7 +413,7 @@ def is_frida_server_running(device_id):
                 log_to_fsr_logs(f"[DEBUG] Could not verify user: {e}, assuming running")
                 return True
         else:
-            log_to_fsr_logs(f"[DEBUG] ✗ Frida server not found in process list")
+            log_to_fsr_logs(f"[DEBUG] [X] Frida server not found in process list")
         
         # Method 2: Check port 27042 (Android-specific) - REQUIRED
         port_check_commands = [
@@ -426,16 +427,16 @@ def is_frida_server_running(device_id):
             try:
                 result = run_adb_command(cmd, timeout=timeout)
                 if "27042" in result and "frida" in result:
-                    log_to_fsr_logs(f"[DEBUG] ✓ Frida server found listening on port 27042 using {cmd[-1]}")
+                    log_to_fsr_logs(f"[DEBUG] [OK] Frida server found listening on port 27042 using {cmd[-1]}")
                     return True
             except:
                 continue
         
-        log_to_fsr_logs(f"[DEBUG] ✗ Frida server not listening on port 27042")
+        log_to_fsr_logs(f"[DEBUG] [X] Frida server not listening on port 27042")
         
         # If both process list and port check fail, server is NOT running
-        log_to_fsr_logs(f"[DEBUG] ✗ Frida server not detected by process list or port check")
-        log_to_fsr_logs(f"[DEBUG] ✗ Server is NOT running (ignoring frida-ps results)")
+        log_to_fsr_logs(f"[DEBUG] [X] Frida server not detected by process list or port check")
+        log_to_fsr_logs(f"[DEBUG] [X] Server is NOT running (ignoring frida-ps results)")
         return False
         
     except subprocess.CalledProcessError as e:
@@ -1339,7 +1340,7 @@ def start_frida_server():
                     
                     # Check if server is now running as root
                     if is_frida_server_running(device_id):
-                        log_to_fsr_logs(f"[DEBUG] ✓ Frida server started successfully as root")
+                        log_to_fsr_logs(f"[DEBUG] [OK] Frida server started successfully as root")
                     else:
                         log_to_fsr_logs(f"[DEBUG] su method failed, trying alternative...")
                         
@@ -1352,7 +1353,7 @@ def start_frida_server():
                             time.sleep(3)
                             
                             if is_frida_server_running(device_id):
-                                log_to_fsr_logs(f"[DEBUG] ✓ Frida server started successfully with su root")
+                                log_to_fsr_logs(f"[DEBUG] [OK] Frida server started successfully with su root")
                             else:
                                 log_to_fsr_logs(f"[DEBUG] su root method failed, trying basic method...")
                                 
@@ -1363,7 +1364,7 @@ def start_frida_server():
                                 time.sleep(3)
                                 
                                 if is_frida_server_running(device_id):
-                                    log_to_fsr_logs(f"[DEBUG] ✓ Frida server started with basic method")
+                                    log_to_fsr_logs(f"[DEBUG] [OK] Frida server started with basic method")
                                 else:
                                     log_to_fsr_logs(f"[WARNING] All start methods failed")
                                     
@@ -1662,12 +1663,19 @@ def check_port(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('127.0.0.1', port)) != 0
 
+def find_available_port(start_port=5000, max_attempts=100):
+    """Find an available port starting from start_port"""
+    for port in range(start_port, start_port + max_attempts):
+        if check_port(port):
+            return port
+    return None
+
 def display_banner():
     """Display the application banner with help information"""
     banner = Fore.GREEN + r"""
-                       ‸
+                       ^
                       _)\.-.
-     .-.__,___,_.-=-. )\`  ͡⇼`\_
+     .-.__,___,_.-=-. )\`  -`\_
  .-.__\__,__,__.-=-. `/  \     `\\
  {~,-~-,-~.-~,-,;;;;\ |   '--;`)/
   \-,~_-~_-,~-,(_(_(;\/   ,;/
@@ -1700,20 +1708,14 @@ def main():
         
         if not check_port(port):
             print(Fore.YELLOW + f"Port {port} is already in use!" + Fore.RESET)
-            if port == 5000:
-                alt_port = 5001
-                response = input(f"Would you like to use port {alt_port} instead? (Y/n): ").strip().lower()
-                if response == "" or response.startswith('y'):
-                    port = alt_port
-                    if not check_port(port):
-                        print(Fore.RED + f"Port {alt_port} is also in use. Please specify a different port using -p option." + Fore.RESET)
-                        sys.exit(1)
-                else:
-                    print(Fore.YELLOW + "Please try again with a different port using -p option." + Fore.RESET)
-                    sys.exit(0)
+            # Automatically find an available port
+            available_port = find_available_port(port if port != 5000 else 5001)
+            if available_port:
+                print(Fore.GREEN + f"Automatically using available port {available_port}" + Fore.RESET)
+                port = available_port
             else:
-                print(Fore.YELLOW + "Please specify a different port using -p option." + Fore.RESET)
-                sys.exit(0)
+                print(Fore.RED + "Could not find any available port. Please specify a different port using -p option." + Fore.RESET)
+                sys.exit(1)
         
         print(Fore.GREEN + f"Please Access http://127.0.0.1:{port}" + Fore.RESET)
         print("Press CTRL+C to stop this program.")
@@ -1725,7 +1727,7 @@ def main():
         pass
     except Exception as e:
         print(Fore.RED + f"Error: {e}" + Fore.RESET)
-    print(Fore.CYAN + "\nThanks For Using This Tools ♡" + Fore.RESET)
+    print(Fore.CYAN + "\nThanks For Using This Tools <3" + Fore.RESET)
 
 @app.route('/generate-frida-script', methods=['POST'])
 def generate_frida_script():
@@ -1774,93 +1776,8 @@ def generate_frida_script_from_prompt(prompt):
         # Create temporary files for Claude interaction
         with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
             # Write the prompt file for Claude
-            prompt_content = f"""# Frida Script Generation Request
-
-## User Request
-{prompt}
-
-## Frida JavaScript API Reference
-IMPORTANT: Use ONLY compatible functions from the official Frida JavaScript API documentation at https://frida.re/docs/javascript-api/. 
-
-**Core Frida APIs to use:**
-- `Java.perform()` or `Java.performNow()` for Java operations
-- `Process.setExceptionHandler()` for exception handling
-- `Module.load()`, `Module.findExportByName()` for native functions
-- `Interceptor.attach()`, `Interceptor.replace()` for hooking
-- `Memory.read*()`, `Memory.write*()` for memory operations
-- `NativePointer()`, `ptr()` for pointer handling
-- `Java.use()` for accessing Java classes
-- `Java.cast()`, `Java.retain()`, `Java.unretain()` for object management
-- `setTimeout()` for delayed execution
-- `console.log()` for output
-
-## Available Ghidra MCP Commands for Binary Analysis
-You have access to a Ghidra MCP server that can provide detailed binary analysis. IMPORTANT: Use these MCP tools to get REAL data from the currently loaded binary:
-
-**Available MCP Functions (USE THESE FIRST):**
-- `list_functions()` - Get all functions in the binary
-- `get_current_function()` - Get currently selected function
-- `get_current_address()` - Get currently selected address
-- `decompile_function_by_address(address)` - Get decompiled C code for function
-- `disassemble_function(address)` - Get assembly code for function
-- `list_strings()` - Get all strings in the binary
-- `get_symbols()` - Get symbol table
-- `search_bytes(pattern)` - Search for byte patterns
-- `get_function_by_name(name)` - Find function by name
-- `get_memory_map()` - Get memory layout
-- `list_imports()` - Get imported functions
-- `list_exports()` - Get exported functions
-
-**CRITICAL: Call these MCP functions FIRST to get real binary data, then generate the Frida script using that actual data.**
-
-## Task
-Generate a complete, working Frida script based on the user's request above. The script should:
-
-**CRITICAL: Target device is ARM Android - ensure full ARM compatibility!**
-
-1. Be syntactically correct JavaScript for Frida on ARM Android
-2. **ARM-specific requirements**:
-   - Use `Java.performNow()` for immediate execution on ARM
-   - Add `Process.setExceptionHandler()` for ARM stability
-   - Include delays before hooking: `setTimeout(() => { ... }, 1000)`
-   - Use `Java.enumerateLoadedClasses()` to verify class loading
-   - Add `Java.vm.tryGetEnv()` checks before VM operations
-3. Include comprehensive error handling with try-catch blocks  
-4. Log informative messages using console.log
-5. Use appropriate Frida APIs with ARM compatibility
-6. Include comments explaining the hooking logic
-7. Be ready to run without modifications on ARM Android
-8. **IMPORTANT**: If specific function names, addresses, or strings are needed, use the Ghidra MCP commands above to get accurate information from the loaded binary
-
-**For native library hooking (ARM):**
-- Use specific function names and addresses from Ghidra analysis
-- Reference actual strings and symbols found in the binary
-- Target real function signatures discovered through decompilation
-- Add ARM-specific pointer handling and memory management
-
-**For Android/Java hooking (ARM):**
-- Always use `Java.performNow()` or delayed execution for ARM stability
-- Use proper object casting with `Java.cast()` on ARM
-- Still use Ghidra data for native components if present
-- Add VM environment validation before operations
-
-**ARM Stability Pattern:**
-```javascript
-// Always use this pattern for ARM Android
-setTimeout(function() {{
-    Java.performNow(function() {{
-        try {{
-            // Your hooking code here
-        }} catch (e) {{
-            console.log("ARM Error: " + e.toString());
-        }}
-    }});
-}}, 1000);
-```
-
-Please provide only the JavaScript code, no markdown formatting or explanations - just the raw Frida script that can be executed directly.
-
-Focus on ARM-compatible, working code that uses actual binary analysis data when available."""
+            # Use the prompt directly without additional formatting
+            prompt_content = prompt
 
             temp_file.write(prompt_content)
             temp_file.flush()
@@ -1952,18 +1869,39 @@ def clean_claude_output(output):
     # Remove common markdown artifacts
     cleaned_lines = []
     in_code_block = False
+    javascript_started = False
     
     for line in lines:
         # Skip markdown code block markers
         if line.strip().startswith('```'):
             in_code_block = not in_code_block
             continue
-            
-        # Skip empty lines at start/end
-        if not cleaned_lines and not line.strip():
-            continue
-            
-        cleaned_lines.append(line)
+        
+        # Skip explanatory text before JavaScript code
+        if not javascript_started:
+            # Look for JavaScript indicators
+            if any(indicator in line for indicator in ['Java.perform', 'setTimeout', 'console.log', 'Interceptor.', 'Module.', 'Process.', 'Java.use']):
+                javascript_started = True
+            elif line.strip().startswith('//') or line.strip().startswith('/*'):
+                javascript_started = True
+            elif line.strip() and not any(skip_word in line.lower() for skip_word in ['perfect', 'here', 'script', 'analysis', 'findings', 'features', 'usage', 'based on']):
+                # Might be start of JS code
+                javascript_started = True
+        
+        # If we've started collecting JavaScript, include the line
+        if javascript_started:
+            # Skip obvious explanation lines
+            if any(skip_phrase in line.lower() for skip_phrase in [
+                'perfect!', 'here\'s what', 'script does:', 'key findings', 'script features:', 
+                'usage:', '## ', '# ', 'frida -u', 'the script will', 'based on'
+            ]):
+                continue
+                
+            # Skip empty lines at start
+            if not cleaned_lines and not line.strip():
+                continue
+                
+            cleaned_lines.append(line)
     
     # Remove trailing empty lines
     while cleaned_lines and not cleaned_lines[-1].strip():
@@ -1972,7 +1910,7 @@ def clean_claude_output(output):
     result = '\n'.join(cleaned_lines)
     
     # If no valid content, return fallback
-    if not result.strip() or 'Java.perform' not in result:
+    if not result.strip() or not any(indicator in result for indicator in ['Java.perform', 'setTimeout', 'console.log', 'Interceptor.', 'Module.']):
         return None
         
     return result

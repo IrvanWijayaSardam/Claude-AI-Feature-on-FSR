@@ -442,7 +442,7 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚀 Claude Bridge - Frida Script Tester</h1>
+            <h1>[FSR] Claude Bridge - Frida Script Tester</h1>
             <p>Test your Frida script generation prompts with Claude AI</p>
         </div>
         
@@ -526,14 +526,14 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                 
                 if (data.success) {
                     outputArea.value = data.script;
-                    showStatus('✅ Script generated successfully!', 'success');
+                    showStatus('[OK] Script generated successfully!', 'success');
                 } else {
                     outputArea.value = `Error: ${data.error}`;
-                    showStatus(`❌ Error: ${data.error}`, 'error');
+                    showStatus(`[ERROR] Error: ${data.error}`, 'error');
                 }
             } catch (error) {
                 outputArea.value = `Network Error: ${error.message}`;
-                showStatus(`❌ Network Error: ${error.message}`, 'error');
+                showStatus(`[ERROR] Network Error: ${error.message}`, 'error');
             } finally {
                 generateBtn.disabled = false;
                 generateBtn.textContent = 'Generate Frida Script';
@@ -552,13 +552,13 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'healthy') {
-                    showStatus(`✅ Claude Bridge is healthy (${data.claude_version})`, 'success');
+                    showStatus(`[OK] Claude Bridge is healthy (${data.claude_version})`, 'success');
                 } else {
-                    showStatus(`❌ Claude Bridge is unhealthy: ${data.error}`, 'error');
+                    showStatus(`[ERROR] Claude Bridge is unhealthy: ${data.error}`, 'error');
                 }
             })
             .catch(error => {
-                showStatus(`❌ Cannot connect to bridge: ${error.message}`, 'error');
+                showStatus(`[ERROR] Cannot connect to bridge: ${error.message}`, 'error');
             });
     </script>
 </body>
@@ -594,6 +594,7 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
             
             prompt = data['prompt']
             print(f"[BRIDGE] Prompt length: {len(prompt)} characters")
+            print(f"[BRIDGE] Original prompt: {prompt[:200]}...")  # Show first 200 chars
             
             # Use the prompt directly without additional formatting
             formatted_prompt = prompt
@@ -627,12 +628,23 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                         with open(temp_prompt_path, 'r') as f:
                             file_content = f.read()
                         
-                        full_prompt = f"Generate a Frida script based on this request: {file_content}\n\nReturn only the JavaScript code."
+                        # Add extremely strict JavaScript-only instructions
+                        full_prompt = f"""You must respond with ONLY raw JavaScript code. Do not write files. Do not create directories. Do not use Write or Edit tools.
+
+Your response must be ONLY this format:
+Java.perform(function() {{
+    // your JavaScript code here
+}});
+
+Request: {file_content}
+
+RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
                         
                         cmd_args = [
                             CLAUDE_EXECUTABLE, 
                             '--mcp-config', MCP_CONFIG,
                             '--dangerously-skip-permissions',
+                            '--print',  # For non-interactive output
                             full_prompt
                         ]
                         result = subprocess.run(
@@ -640,7 +652,9 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                             capture_output=True,
                             text=True,
                             timeout=300,  # 5 minutes timeout for MCP
-                            cwd=os.getcwd()
+                            cwd=os.getcwd(),
+                            encoding='utf-8',
+                            errors='replace'
                         )
                         
                         if result.returncode == 0 and result.stdout.strip():
@@ -660,16 +674,29 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                         with open(temp_prompt_path, 'r') as f:
                             file_content = f.read()
                         
-                        full_prompt = f"Generate a Frida script based on this request: {file_content}\n\nReturn only the JavaScript code."
+                        # Add extremely strict JavaScript-only instructions
+                        full_prompt = f"""You must respond with ONLY raw JavaScript code. Do not write files. Do not create directories. Do not use Write or Edit tools.
+
+Your response must be ONLY this format:
+Java.perform(function() {{
+    // your JavaScript code here
+}});
+
+Request: {file_content}
+
+RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
                         
                         result = subprocess.run([
-                            CLAUDE_EXECUTABLE, 
+                            CLAUDE_EXECUTABLE,
+                            '--print',  # For non-interactive output 
                             full_prompt
                         ], 
                         capture_output=True, 
                         text=True, 
                         timeout=300,  # 5 minutes timeout
-                        cwd=os.getcwd())
+                        cwd=os.getcwd(),
+                        encoding='utf-8',
+                        errors='replace')
                         
                         if result.returncode == 0:
                             print(f"[BRIDGE] Plain Claude CLI succeeded!")
@@ -699,14 +726,17 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                 print(f"[BRIDGE] Claude CLI stderr: {result.stderr[:200] if result.stderr else 'None'}")
                 
                 if result.returncode == 0:
-                    generated_script = result.stdout.strip()
+                    raw_output = result.stdout.strip()
                     
                     # Log the AI response for debugging
                     print(f"[BRIDGE] ==================== AI RESPONSE ====================")
                     print(f"[BRIDGE] Raw Claude Output:")
-                    print(result.stdout)
+                    print(raw_output)
                     print(f"[BRIDGE] =====================================================")
-                    print(f"[BRIDGE] Cleaned script length: {len(generated_script)}")
+                    
+                    # Extract JavaScript code from Claude's response
+                    generated_script = self.extract_javascript_code(raw_output)
+                    print(f"[BRIDGE] Extracted script length: {len(generated_script)}")
                     
                     response = {
                         'success': True,
@@ -742,6 +772,78 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                 'error': f'Bridge error: {str(e)}'
             }
             self.send_json_response(500, response)
+    
+    def extract_javascript_code(self, text):
+        """Aggressively extract only JavaScript code from Claude's response"""
+        import re
+        
+        # If Claude didn't comply at all, generate a basic working script
+        if not any(js_indicator in text for js_indicator in ['Java.perform', 'console.log', 'Interceptor.attach', 'Java.use']):
+            return """Java.perform(function() {
+    console.log("[+] Frida script started");
+    console.log("[!] Claude did not provide JavaScript - using template");
+    console.log("[!] Please try a more specific prompt");
+});"""
+        
+        # Priority 1: Extract complete Java.perform blocks with proper brace counting
+        java_perform_pattern = r'Java\.perform\(function\(\) \{'
+        start_match = re.search(java_perform_pattern, text)
+        
+        if start_match:
+            start_pos = start_match.start()
+            lines = text[start_pos:].split('\n')
+            js_lines = []
+            brace_count = 0
+            
+            for line in lines:
+                # Skip obvious non-JavaScript lines
+                if any(marker in line for marker in ['##', '**', 'Perfect!', 'Based on', 'Here\'s what', 'The Code You Need']):
+                    if js_lines:  # Only break if we've collected some JS
+                        break
+                    continue
+                
+                js_lines.append(line)
+                brace_count += line.count('{') - line.count('}')
+                
+                # Stop when we have a complete Java.perform block
+                if brace_count == 0 and len(js_lines) > 1:
+                    break
+            
+            if js_lines and brace_count <= 0:
+                result = '\n'.join(js_lines).strip()
+                if result.endswith('});'):
+                    return result
+        
+        # Priority 2: Look for JavaScript code blocks
+        js_pattern = r'```(?:javascript|js)\n(.*?)\n```'
+        matches = re.findall(js_pattern, text, re.DOTALL | re.IGNORECASE)
+        
+        for match in matches:
+            if 'Java.perform' in match:
+                return match.strip()
+        
+        # Priority 3: Generate a working script from context
+        lines = text.split('\n')
+        js_content = []
+        
+        # Look for any JavaScript-like content and build a script
+        for line in lines:
+            if any(js_indicator in line for js_indicator in ['console.log', 'Interceptor.attach', 'Java.use', 'setTimeout']):
+                js_content.append('    ' + line.strip())
+        
+        if js_content:
+            return f"""Java.perform(function() {{
+    console.log("[+] Generated from Claude analysis");
+{chr(10).join(js_content)}
+    console.log("[+] Script completed");
+}});"""
+        
+        # Final fallback: Basic template with helpful message
+        return """Java.perform(function() {
+    console.log("[+] Frida script started");
+    console.log("[!] No JavaScript code extracted from Claude response");
+    console.log("[!] Try a more direct prompt like: 'Generate Frida script to hook MainActivity.onCreate'");
+});"""
     
     def send_json_response(self, status_code, data):
         """Send JSON response"""
@@ -843,10 +945,10 @@ Examples:
     CONFIG['jadx_port'] = args.jadx_port
     
     if args.config_info:
-        print("🔧 Current Configuration:")
+        print("[CONFIG] Current Configuration:")
         print("=" * 50)
         for key, value in CONFIG.items():
-            status = "✅" if (key.endswith('_path') or key.endswith('_executable')) and os.path.exists(value) else "📝"
+            status = "[OK]" if (key.endswith('_path') or key.endswith('_executable')) and os.path.exists(value) else "[INFO]"
             print(f"  {status} {key}: {value}")
         print("=" * 50)
         sys.exit(0)
@@ -860,17 +962,17 @@ if __name__ == '__main__':
     # Parse command line arguments and update configuration
     args = parse_arguments()
     
-    print("🚀 Starting Claude CLI HTTP Bridge (No Dependencies)...")
-    print(f"📡 Bridge will be available at: http://localhost:{CONFIG['bridge_port']}")
-    print(f"🔗 Docker containers can access at: http://host.docker.internal:{CONFIG['bridge_port']}")
-    print("💡 Use /health to check status, /generate-script to generate Frida scripts")
-    print("⚠️  Make sure Claude CLI is installed and authenticated on this host")
+    print("[FSR] Starting Claude CLI HTTP Bridge (No Dependencies)...")
+    print(f"[BRIDGE] Bridge will be available at: http://localhost:{CONFIG['bridge_port']}")
+    print(f"[DOCKER] Docker containers can access at: http://host.docker.internal:{CONFIG['bridge_port']}")
+    print("[INFO] Use /health to check status, /generate-script to generate Frida scripts")
+    print("[WARN]  Make sure Claude CLI is installed and authenticated on this host")
     print()
     
     # Find Claude CLI executable
     claude_cmd = find_claude_executable()
     if not claude_cmd:
-        print("❌ Claude CLI not found or not working")
+        print("[ERROR] Claude CLI not found or not working")
         print("   Locations checked:")
         
         # Show what was found by shutil.which
@@ -905,55 +1007,55 @@ if __name__ == '__main__':
         print("   3. Try running 'claude --version' manually to test")
         sys.exit(1)
     
-    print(f"✅ Claude CLI found at: {claude_cmd}")
+    print(f"[OK] Claude CLI found at: {claude_cmd}")
     
     # Find and configure MCP servers
     mcp_config_path = find_mcp_servers()
     if mcp_config_path:
-        print(f"✅ MCP servers configured")
+        print(f"[OK] MCP servers configured")
     else:
-        print(f"⚠️  No MCP servers found - using plain Claude CLI")
+        print(f"[WARN]  No MCP servers found - using plain Claude CLI")
     
     # Get version info
     try:
         result = subprocess.run([claude_cmd, '--version'], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            print(f"✅ Version: {result.stdout.strip()}")
+            print(f"[OK] Version: {result.stdout.strip()}")
         else:
-            print(f"⚠️  Warning: Version check failed: {result.stderr}")
+            print(f"[WARN]  Warning: Version check failed: {result.stderr}")
     except Exception as e:
-        print(f"⚠️  Warning: Could not get version: {e}")
+        print(f"[WARN]  Warning: Could not get version: {e}")
     
     # Check available options
-    print("🔍 Checking Claude CLI options...")
+    print("[CHECK] Checking Claude CLI options...")
     try:
         help_result = subprocess.run([claude_cmd, '--help'], capture_output=True, text=True, timeout=5)
         if help_result.returncode == 0:
             help_text = help_result.stdout
-            print("📋 Available options discovered:")
+            print("[OPTIONS] Available options discovered:")
             if '--file' in help_text:
-                print("   ✅ --file supported")
+                print("   [OK] --file supported")
             if '--ide' in help_text:
-                print("   ✅ --ide supported") 
+                print("   [OK] --ide supported") 
             if '--prompt' in help_text:
-                print("   ✅ --prompt supported")
+                print("   [OK] --prompt supported")
             if '--input' in help_text:
-                print("   ✅ --input supported")
+                print("   [OK] --input supported")
         else:
-            print("⚠️  Could not get help info")
+            print("[WARN]  Could not get help info")
     except Exception as e:
-        print(f"⚠️  Could not check options: {e}")
+        print(f"[WARN]  Could not check options: {e}")
     
     # Start HTTP server
     server_address = (CONFIG['bridge_host'], CONFIG['bridge_port'])
     httpd = HTTPServer(server_address, ClaudeBridgeHandler)
     
-    print(f"🎯 Bridge server started on {server_address[0]}:{server_address[1]}")
-    print("📝 Logs will be minimal. Press Ctrl+C to stop.")
+    print(f"[SERVER] Bridge server started on {server_address[0]}:{server_address[1]}")
+    print("[LOGS] Logs will be minimal. Press Ctrl+C to stop.")
     print()
     
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n👋 Shutting down Claude CLI bridge...")
+        print("\n[SHUTDOWN] Shutting down Claude CLI bridge...")
         httpd.server_close()
