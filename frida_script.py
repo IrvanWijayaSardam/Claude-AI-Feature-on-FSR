@@ -1775,9 +1775,22 @@ def generate_frida_script_from_prompt(prompt):
         
         # Create temporary files for Claude interaction
         with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
-            # Write the prompt file for Claude
-            # Use the prompt directly without additional formatting
-            prompt_content = prompt
+            # Write the prompt file for Claude with strict formatting rules
+            prompt_content = f"""You are a Frida script generator. You must respond with ONLY raw JavaScript code for Frida dynamic instrumentation. Do not write files. Do not create directories. Do not use Write or Edit tools.
+
+Your response must be ONLY this format:
+Java.perform(function() {{
+    // your JavaScript code here
+}});
+
+IMPORTANT: Generate a Frida script based on this request: {prompt}
+
+If the request is unclear or asks about analyzing files you can't see, generate a generic Frida script that:
+1. Logs when the main activity starts
+2. Hooks common Android methods  
+3. Provides basic instrumentation functionality
+
+RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
 
             temp_file.write(prompt_content)
             temp_file.flush()

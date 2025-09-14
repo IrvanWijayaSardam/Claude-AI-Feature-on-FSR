@@ -596,7 +596,7 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
             print(f"[BRIDGE] Prompt length: {len(prompt)} characters")
             print(f"[BRIDGE] Original prompt: {prompt[:200]}...")  # Show first 200 chars
             
-            # Use the prompt directly without additional formatting
+            # Use the user's prompt directly - CLAUDE.md will provide the detailed instructions
             formatted_prompt = prompt
             
             try:
@@ -628,24 +628,17 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                         with open(temp_prompt_path, 'r') as f:
                             file_content = f.read()
                         
-                        # Add extremely strict JavaScript-only instructions
-                        full_prompt = f"""You must respond with ONLY raw JavaScript code. Do not write files. Do not create directories. Do not use Write or Edit tools.
-
-Your response must be ONLY this format:
-Java.perform(function() {{
-    // your JavaScript code here
-}});
-
-Request: {file_content}
-
-RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
+                        # Print the complete final prompt for debugging
+                        print(f"[BRIDGE] ==================== FINAL PROMPT (MCP) ====================")
+                        print(file_content)
+                        print(f"[BRIDGE] ============================================================")
                         
                         cmd_args = [
                             CLAUDE_EXECUTABLE, 
                             '--mcp-config', MCP_CONFIG,
                             '--dangerously-skip-permissions',
                             '--print',  # For non-interactive output
-                            full_prompt
+                            file_content
                         ]
                         result = subprocess.run(
                             cmd_args,
@@ -674,22 +667,15 @@ RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
                         with open(temp_prompt_path, 'r') as f:
                             file_content = f.read()
                         
-                        # Add extremely strict JavaScript-only instructions
-                        full_prompt = f"""You must respond with ONLY raw JavaScript code. Do not write files. Do not create directories. Do not use Write or Edit tools.
-
-Your response must be ONLY this format:
-Java.perform(function() {{
-    // your JavaScript code here
-}});
-
-Request: {file_content}
-
-RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
+                        # Print the complete final prompt for debugging
+                        print(f"[BRIDGE] ==================== FINAL PROMPT (Plain) ====================")
+                        print(file_content)
+                        print(f"[BRIDGE] =============================================================")
                         
                         result = subprocess.run([
                             CLAUDE_EXECUTABLE,
                             '--print',  # For non-interactive output 
-                            full_prompt
+                            file_content
                         ], 
                         capture_output=True, 
                         text=True, 
@@ -724,20 +710,25 @@ RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
                 print(f"[BRIDGE] Claude CLI return code: {result.returncode}")
                 print(f"[BRIDGE] Claude CLI stdout length: {len(result.stdout) if result.stdout else 0}")
                 print(f"[BRIDGE] Claude CLI stderr: {result.stderr[:200] if result.stderr else 'None'}")
-                
+
                 if result.returncode == 0:
                     raw_output = result.stdout.strip()
-                    
+
                     # Log the AI response for debugging
                     print(f"[BRIDGE] ==================== AI RESPONSE ====================")
                     print(f"[BRIDGE] Raw Claude Output:")
                     print(raw_output)
                     print(f"[BRIDGE] =====================================================")
-                    
-                    # Extract JavaScript code from Claude's response
-                    generated_script = self.extract_javascript_code(raw_output)
-                    print(f"[BRIDGE] Extracted script length: {len(generated_script)}")
-                    
+
+                    # Try to find and read any generated JavaScript files first
+                    generated_script = self.find_and_read_generated_script(raw_output)
+
+                    # If no files found, extract from response text
+                    if not generated_script:
+                        generated_script = self.extract_javascript_code(raw_output)
+
+                    print(f"[BRIDGE] Final script length: {len(generated_script)}")
+
                     response = {
                         'success': True,
                         'script': generated_script
@@ -773,90 +764,208 @@ RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
             }
             self.send_json_response(500, response)
     
-    def extract_javascript_code(self, text):
-        """Aggressively extract only JavaScript code from Claude's response"""
+    def find_and_read_generated_script(self, claude_output):
+        """Read the expected temp_generated.js file or find any recently created JS file"""
+        import os
+        import glob
         import re
-        
-        # If Claude didn't comply at all, generate a basic working script
-        if not any(js_indicator in text for js_indicator in ['Java.perform', 'console.log', 'Interceptor.attach', 'Java.use']):
-            return """Java.perform(function() {
-    console.log("[+] Frida script started");
-    console.log("[!] Claude did not provide JavaScript - using template");
-    console.log("[!] Please try a more specific prompt");
-});"""
-        
-        # Priority 1: Extract complete Java.perform blocks with proper brace counting
+        from pathlib import Path
+
+        temp_file = "temp_generated.js"
+        print(f"[BRIDGE] Looking for expected temp file: {temp_file}")
+
+        # First try the expected file name
+        if os.path.exists(temp_file):
+            try:
+                print(f"[BRIDGE] Found expected temp file: {temp_file}")
+                with open(temp_file, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+
+                if content:
+                    print(f"[BRIDGE] Successfully read {len(content)} chars from {temp_file}")
+                    return content
+            except Exception as e:
+                print(f"[BRIDGE] Error reading {temp_file}: {e}")
+
+        # Fallback: Look for any JS files mentioned in Claude's output or recently created
+        print(f"[BRIDGE] Expected file not found, searching for alternative JS files...")
+
+        # Extract file names from Claude's output
+        file_patterns = [
+            r'`([^`]+\.js)`',
+            r'"([^"]+\.js)"',
+            r'\'([^\']+\.js)\'',
+            r'called\s+`([^`]+\.js)`',
+            r'script\s+called\s+`([^`]+\.js)`',
+            r'(\w+[-_]?\w*\.js)'
+        ]
+
+        potential_files = []
+        for pattern in file_patterns:
+            matches = re.findall(pattern, claude_output, re.IGNORECASE)
+            potential_files.extend(matches)
+
+        # Also search for recently created JS files
+        search_patterns = ["*.js", "scripts/*.js", "temp/*.js"]
+        for pattern in search_patterns:
+            try:
+                found_files = glob.glob(pattern)
+                potential_files.extend(found_files)
+            except:
+                pass
+
+        print(f"[BRIDGE] Found potential JS files: {potential_files}")
+
+        # Try to read the most recently created JS file that looks like Frida script
+        for filename in set(potential_files):  # Remove duplicates
+            try:
+                if os.path.exists(filename):
+                    print(f"[BRIDGE] Checking file: {filename}")
+                    with open(filename, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+
+                    # Verify it looks like a Frida script
+                    if content and any(indicator in content for indicator in ['Java.perform', 'console.log', 'Interceptor.attach']):
+                        print(f"[BRIDGE] Found valid Frida script in: {filename}")
+                        print(f"[BRIDGE] Successfully read {len(content)} chars from {filename}")
+
+                        # Copy to expected location for future consistency
+                        try:
+                            with open(temp_file, 'w', encoding='utf-8') as f:
+                                f.write(content)
+                            print(f"[BRIDGE] Copied content to expected location: {temp_file}")
+                        except:
+                            print(f"[BRIDGE] Could not copy to {temp_file}")
+
+                        return content
+                    else:
+                        print(f"[BRIDGE] File {filename} doesn't contain Frida script indicators")
+            except Exception as e:
+                print(f"[BRIDGE] Could not read {filename}: {e}")
+
+        print(f"[BRIDGE] No valid script files found")
+        return None
+
+    def extract_javascript_code(self, text):
+        """Extract JavaScript code from Claude's response, supporting structured format"""
+        import re
+
+        # Priority 1: Extract from structured response format (===FRIDA-SCRIPT=== blocks)
+        frida_script_pattern = r'===FRIDA-SCRIPT===(.*?)===FRIDA-SCRIPT==='
+        structured_match = re.search(frida_script_pattern, text, re.DOTALL | re.IGNORECASE)
+
+        if structured_match:
+            script_content = structured_match.group(1).strip()
+            # Remove any markdown code block markers
+            script_content = re.sub(r'^```(?:javascript|js)?\n?', '', script_content)
+            script_content = re.sub(r'\n?```$', '', script_content)
+            script_content = script_content.strip()
+
+            if script_content and any(js_indicator in script_content for js_indicator in ['Java.perform', 'console.log', 'Interceptor.attach', 'Java.use']):
+                return script_content
+
+        # Priority 2: Extract complete Java.perform blocks with proper brace counting
         java_perform_pattern = r'Java\.perform\(function\(\) \{'
         start_match = re.search(java_perform_pattern, text)
-        
+
         if start_match:
             start_pos = start_match.start()
             lines = text[start_pos:].split('\n')
             js_lines = []
             brace_count = 0
-            
+
             for line in lines:
                 # Skip obvious non-JavaScript lines
                 if any(marker in line for marker in ['##', '**', 'Perfect!', 'Based on', 'Here\'s what', 'The Code You Need']):
                     if js_lines:  # Only break if we've collected some JS
                         break
                     continue
-                
+
                 js_lines.append(line)
                 brace_count += line.count('{') - line.count('}')
-                
+
                 # Stop when we have a complete Java.perform block
                 if brace_count == 0 and len(js_lines) > 1:
                     break
-            
+
             if js_lines and brace_count <= 0:
                 result = '\n'.join(js_lines).strip()
                 if result.endswith('});'):
                     return result
-        
-        # Priority 2: Look for JavaScript code blocks
+
+        # Priority 3: Look for JavaScript code blocks in markdown
         js_pattern = r'```(?:javascript|js)\n(.*?)\n```'
         matches = re.findall(js_pattern, text, re.DOTALL | re.IGNORECASE)
-        
+
         for match in matches:
             if 'Java.perform' in match:
                 return match.strip()
-        
-        # Priority 3: Generate a working script from context
+
+        # Priority 4: Generate a basic hook script from analysis if no JS found
+        # If Claude didn't provide JS but gave analysis, create a template
+        if not any(js_indicator in text for js_indicator in ['Java.perform', 'console.log', 'Interceptor.attach', 'Java.use']):
+            return """Java.perform(function() {
+    console.log("[+] Frida script started");
+    console.log("[!] Claude provided analysis but no JavaScript code");
+    console.log("[!] Please modify your prompt to request JavaScript code");
+    console.log("[!] Example: 'Generate Frida script to hook the sesame function'");
+
+    // Placeholder hook - modify as needed
+    // Java.use("com.example.YourClass").yourMethod.implementation = function() {
+    //     console.log("[+] Method called");
+    //     return this.yourMethod.apply(this, arguments);
+    // };
+});"""
+
+        # Priority 5: Generate a working script from found JavaScript-like content
         lines = text.split('\n')
         js_content = []
-        
+
         # Look for any JavaScript-like content and build a script
         for line in lines:
             if any(js_indicator in line for js_indicator in ['console.log', 'Interceptor.attach', 'Java.use', 'setTimeout']):
                 js_content.append('    ' + line.strip())
-        
+
         if js_content:
             return f"""Java.perform(function() {{
     console.log("[+] Generated from Claude analysis");
 {chr(10).join(js_content)}
     console.log("[+] Script completed");
 }});"""
-        
+
         # Final fallback: Basic template with helpful message
         return """Java.perform(function() {
     console.log("[+] Frida script started");
     console.log("[!] No JavaScript code extracted from Claude response");
-    console.log("[!] Try a more direct prompt like: 'Generate Frida script to hook MainActivity.onCreate'");
+    console.log("[!] Try a more specific prompt like: 'Generate Frida script to hook MainActivity.onCreate'");
 });"""
     
     def send_json_response(self, status_code, data):
         """Send JSON response"""
-        response_data = json.dumps(data).encode('utf-8')
-        
+        try:
+            response_data = json.dumps(data, ensure_ascii=False).encode('utf-8')
+            print(f"[BRIDGE] JSON response size: {len(response_data)} bytes")
+
+            # Debug: Show first part of the script content
+            if 'script' in data and data.get('script'):
+                script_preview = data['script'][:100].replace('\n', '\\n')
+                print(f"[BRIDGE] Script preview: {script_preview}...")
+
+        except Exception as e:
+            print(f"[BRIDGE] JSON encoding error: {e}")
+            # Fallback with escaped content
+            if 'script' in data:
+                data['script'] = data['script'].replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+            response_data = json.dumps(data, ensure_ascii=True).encode('utf-8')
+
         self.send_response(status_code)
-        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(response_data)))
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
-        
+
         self.wfile.write(response_data)
     
     def log_message(self, format, *args):
