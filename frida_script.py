@@ -114,11 +114,11 @@ def check_frida_versions():
     """Check Frida client and server versions for compatibility"""
     try:
         # Get Frida client version
-        client_result = subprocess.run(['frida', '--version'], capture_output=True, text=True, timeout=5)
+        client_result = subprocess.run(['frida', '--version'], capture_output=True, text=True, timeout=600)
         client_version = client_result.stdout.strip() if client_result.returncode == 0 else "Unknown"
         
         # Try to get server version
-        server_result = subprocess.run(['frida-ps', '-U'], capture_output=True, text=True, timeout=5)
+        server_result = subprocess.run(['frida-ps', '-U'], capture_output=True, text=True, timeout=600)
         server_version = "Unknown"
         
         if server_result.returncode == 0 and server_result.stdout:
@@ -1635,7 +1635,7 @@ def start_frida_server_with_force_download(device_id):
                 
                 # Try to get server version
                 try:
-                    server_result = subprocess.run(['frida-ps', '-U'], capture_output=True, text=True, timeout=5)
+                    server_result = subprocess.run(['frida-ps', '-U'], capture_output=True, text=True, timeout=600)
                     if server_result.returncode == 0:
                         log_to_fsr_logs(f"[DEBUG] Server is responding to frida-ps")
                     else:
@@ -1776,23 +1776,8 @@ def generate_frida_script_from_prompt(prompt):
         # Create temporary files for Claude interaction
         with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
             # Write the prompt file for Claude with strict formatting rules
-            prompt_content = f"""You are a Frida script generator. You must respond with ONLY raw JavaScript code for Frida dynamic instrumentation. Do not write files. Do not create directories. Do not use Write or Edit tools.
-
-Your response must be ONLY this format:
-Java.perform(function() {{
-    // your JavaScript code here
-}});
-
-IMPORTANT: Generate a Frida script based on this request: {prompt}
-
-If the request is unclear or asks about analyzing files you can't see, generate a generic Frida script that:
-1. Logs when the main activity starts
-2. Hooks common Android methods  
-3. Provides basic instrumentation functionality
-
-RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
-
-            temp_file.write(prompt_content)
+        
+            temp_file.write(prompt)
             temp_file.flush()
             
             log_to_fsr_logs("[DEBUG] Calling Claude CLI for script generation...")
@@ -1808,7 +1793,7 @@ RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
                     ], 
                     capture_output=True, 
                     text=True, 
-                    timeout=300,  # 5 minutes timeout
+                    timeout=600,  # 5 minutes timeout
                     cwd=os.getcwd()
                     )
                     
@@ -1825,7 +1810,7 @@ RESPOND WITH JAVASCRIPT CODE ONLY. NO FILE CREATION. NO EXPLANATIONS."""
                     
                     response = requests.post(f"{CLAUDE_HOST_URL}/generate-script", 
                                            json={"prompt": file_content}, 
-                                           timeout=300)  # 5 minutes timeout
+                                           timeout=600)  # 10 minutes timeout
                     
                     if response.status_code == 200:
                         generated_script = response.json().get('script', '')
@@ -1934,7 +1919,7 @@ def call_claude_via_bridge(prompt):
         import requests
         response = requests.post(f"{CLAUDE_HOST_URL}/generate-script", 
                                json={"prompt": prompt}, 
-                               timeout=300)  # 5 minutes timeout
+                               timeout=600)  # 10 minutes timeout
         
         if response.status_code == 200:
             result_data = response.json()
@@ -2052,7 +2037,7 @@ Please provide ONLY the complete fixed JavaScript code, no explanations or markd
                     ], 
                     capture_output=True, 
                     text=True, 
-                    timeout=300,  # 5 minutes timeout
+                    timeout=600,  # 10 minutes timeout
                     cwd=os.getcwd())
                 else:
                     # Docker environment - use bridge

@@ -644,7 +644,7 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                             cmd_args,
                             capture_output=True,
                             text=True,
-                            timeout=300,  # 5 minutes timeout for MCP
+                            timeout=600,  # 10 minutes timeout for MCP
                             cwd=os.getcwd(),
                             encoding='utf-8',
                             errors='replace'
@@ -679,7 +679,7 @@ class ClaudeBridgeHandler(BaseHTTPRequestHandler):
                         ], 
                         capture_output=True, 
                         text=True, 
-                        timeout=300,  # 5 minutes timeout
+                        timeout=600,  # 10 minutes timeout
                         cwd=os.getcwd(),
                         encoding='utf-8',
                         errors='replace')
