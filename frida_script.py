@@ -1957,137 +1957,66 @@ def call_claude_via_bridge(prompt):
         }
 
 def attempt_script_autofix(script_path, error_messages, output_log):
-    """Attempt to fix Frida script errors using Claude AI"""
-    
+    """Attempt to fix Frida script errors using Claude Bridge and temp_generated.js"""
+
     try:
-        log_to_fsr_logs("[AUTO-FIX] Attempting to fix script using AI...")
-        
-        # Read the original failing script
-        with open(script_path, 'r') as f:
-            original_script = f.read()
-        
-        # Check if Claude CLI is available
-        if not is_claude_cli_available():
-            log_to_fsr_logs("[AUTO-FIX] Claude CLI not available for script fixing")
-            return None
-        
-        # Get Ghidra context for better fixing
-        ghidra_context = get_ghidra_analysis_context()
-        
-        # Create fix prompt with detailed error information
-        error_summary = '\n'.join(error_messages)
+        log_to_fsr_logs("[AUTO-FIX] Attempting to fix script using AI via Claude Bridge...")
+
+        # Read the original failing script from temp_generated.js
+        temp_script_path = "temp_generated.js"
+        original_script = ""
+
+        if os.path.exists(temp_script_path):
+            with open(temp_script_path, 'r') as f:
+                original_script = f.read()
+            log_to_fsr_logs(f"[AUTO-FIX] Reading from temp_generated.js ({len(original_script)} chars)")
+        else:
+            # Fallback to the script_path if temp file doesn't exist
+            with open(script_path, 'r') as f:
+                original_script = f.read()
+            log_to_fsr_logs(f"[AUTO-FIX] Fallback reading from {script_path}")
+
+        # Extract recent Frida logs for context
+        error_summary = '\n'.join(error_messages[-5:]) if error_messages else "No specific errors detected"
         output_summary = '\n'.join(output_log[-10:]) if output_log else "No additional output"
-        
-        fix_prompt = """# Frida Script Error Fix Request
 
-## Original Script (BROKEN)
-```javascript
-{}
-```
+        # Create minimal fix prompt - CLAUDE.md contains all the fix requirements
+        fix_prompt = f"""Fix the Frida script errors in temp_generated.js based on these error logs:
 
-## Error Messages Detected
-{}
+Error Messages: {error_summary}
 
-## Recent Frida Output Log
-{}
+Recent Output: {output_summary}
 
-## Ghidra Analysis Context (if available)
-{}""".format(original_script, error_summary, output_summary, ghidra_context) + f"""
+Please read the current script from temp_generated.js, fix the errors, and update the file with the corrected version."""
 
-## Task: Fix the Frida Script
-The above Frida script is producing errors. Please fix the script based on the error messages and output log.
+        try:
+            # Call Claude Bridge to fix the script
+            response = call_claude_via_bridge(fix_prompt)
 
-**CRITICAL: This is for ARM Android device - ensure ARM compatibility!**
+            if response and response.get('success') and response.get('script'):
+                fixed_script = response['script'].strip()
 
-Common fixes needed:
-1. **Invalid instruction errors (ARM CRITICAL)**: 
-   - Use `Java.performNow()` instead of `Java.perform()` for immediate execution
-   - Add `Process.setExceptionHandler()` for ARM exception handling
-   - Use `Java.classFactory.loader` instead of direct class loading
-   - Add ARM-specific delay before hooking: `setTimeout(() => { ... }, 1000)`
-   - Use `Java.enumerateLoadedClasses()` to verify class availability
-   
-2. **ARM Architecture Specific Fixes**:
-   - Always wrap hooks in `Java.performNow()` or delayed execution
-   - Use `Java.cast()` for proper object casting on ARM
-   - Add `Java.vm.tryGetEnv()` checks before VM operations
-   - Use `Java.retain()` and `Java.unretain()` for object lifecycle management
+                if fixed_script and len(fixed_script) > 50:
+                    # Update temp_generated.js with the fixed script
+                    with open(temp_script_path, 'w') as f:
+                        f.write(fixed_script)
 
-3. **ReferenceError**: Fix undefined variables, check Java class/method names
-4. **TypeError**: Fix incorrect data types, add proper type conversions
-5. **Java class not found**: Verify correct class names, add error handling
-6. **Method signature mismatch**: Check parameter types and return types
-7. **Memory access errors**: Add proper bounds checking and null checks
-8. **Hook timing issues**: Add delays or use Java.performNow()
+                    log_to_fsr_logs(f"[AUTO-FIX] Successfully generated and saved fixed script to {temp_script_path}")
+                    log_to_fsr_logs(f"[AUTO-FIX] Fixed script length: {len(fixed_script)} chars")
 
-## Requirements for Fixed Script (ARM Android):
-1. Must be syntactically correct JavaScript for Frida on ARM Android
-2. Use `Java.performNow()` for immediate VM operations on ARM
-3. Add ARM-specific exception handling with `Process.setExceptionHandler()`
-4. Include comprehensive error handling with try-catch blocks
-5. Add proper null checks and validation
-6. Use correct Java class and method names (check case sensitivity)
-7. Include informative console.log messages for debugging
-8. **MANDATORY**: Add delays before hooking operations for ARM stability
-9. Use `Java.enumerateLoadedClasses()` to verify classes exist
-10. Add proper VM environment checks with `Java.vm.tryGetEnv()`
-
-Please provide ONLY the complete fixed JavaScript code, no explanations or markdown - just the raw Frida script that can be executed directly."""
-
-        # Create temporary file for the fix prompt
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as temp_file:
-            temp_file.write(fix_prompt)
-            temp_file.flush()
-            
-            log_to_fsr_logs("[AUTO-FIX] Calling Claude CLI for script fixing...")
-            
-            # Call Claude CLI for fixing
-            try:
-                if CLAUDE_CLI_COMMAND:
-                    # Native environment
-                    result = subprocess.run([
-                        CLAUDE_CLI_COMMAND, 
-                        "--file", temp_file.name,
-                        "--prompt", "Fix the broken Frida script based on the error analysis in this file. Return only the corrected JavaScript code."
-                    ], 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=300,  # 5 minutes timeout
-                    cwd=os.getcwd())
+                    return fixed_script
                 else:
-                    # Docker environment - use bridge
-                    result = call_claude_via_bridge(fix_prompt)
-                
-                if (hasattr(result, 'returncode') and result.returncode == 0) or (isinstance(result, dict) and result.get('success')):
-                    if hasattr(result, 'stdout'):
-                        fixed_script = result.stdout.strip()
-                    else:
-                        fixed_script = result.get('script', '').strip()
-                    
-                    if fixed_script and len(fixed_script) > 50:  # Basic sanity check
-                        log_to_fsr_logs(f"[AUTO-FIX] Successfully generated fixed script (length: {len(fixed_script)})")
-                        return fixed_script
-                    else:
-                        log_to_fsr_logs("[AUTO-FIX] Generated script appears too short or empty")
-                        return None
-                else:
-                    error_msg = getattr(result, 'stderr', '') or result.get('error', 'Unknown error')
-                    log_to_fsr_logs(f"[AUTO-FIX] Claude CLI failed: {error_msg}")
+                    log_to_fsr_logs("[AUTO-FIX] Generated script appears too short or empty")
                     return None
-                        
-            except subprocess.TimeoutExpired:
-                log_to_fsr_logs("[AUTO-FIX] Claude CLI timed out during fix attempt")
+            else:
+                error_msg = response.get('error', 'Unknown bridge error') if response else 'No response from bridge'
+                log_to_fsr_logs(f"[AUTO-FIX] Claude Bridge failed: {error_msg}")
                 return None
-            except Exception as e:
-                log_to_fsr_logs(f"[AUTO-FIX] Exception during Claude CLI call: {str(e)}")
-                return None
-            finally:
-                # Cleanup temp file
-                try:
-                    os.unlink(temp_file.name)
-                except:
-                    pass
-                    
+
+        except Exception as e:
+            log_to_fsr_logs(f"[AUTO-FIX] Exception during Claude Bridge call: {str(e)}")
+            return None
+
     except Exception as e:
         log_to_fsr_logs(f"[AUTO-FIX] Exception in script autofix: {str(e)}")
         return None

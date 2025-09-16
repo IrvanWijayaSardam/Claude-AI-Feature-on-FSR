@@ -29,6 +29,34 @@ When generating Frida scripts:
    - Do NOT use other filenames like `sesame-hook.js`, `scripts/hook.js`, etc.
    - Always overwrite if file exists
 
+## Script Fixing Workflow
+
+When fixing Frida script errors:
+
+1. **Read Current Script**: Always read the current script from `temp_generated.js`
+2. **Analyze Errors**: Focus on the provided error messages and output logs
+3. **Apply ARM Android Fixes**: Ensure compatibility with ARM Android devices
+4. **Save Fixed Script**: Update `temp_generated.js` with the corrected version
+
+### Common Fixes for ARM Android:
+- Use `Module.getBaseAddress()` instead of `Module.findBaseAddress()` with null checks
+- Add proper error handling with try-catch blocks
+- Use `Java.perform()` with delayed execution for timing issues
+- Add null pointer checks before memory operations
+- Verify class/method names exist before hooking
+- Use proper JNI function signatures and offsets
+- Add ARM-specific exception handling
+
+### Fix Requirements:
+1. Must be syntactically correct JavaScript for Frida on ARM Android
+2. Include comprehensive error handling with try-catch blocks
+3. Add proper null checks and validation
+4. Use correct Java class and method names (check case sensitivity)
+5. Include informative console.log messages for debugging
+6. Handle memory access errors with proper bounds checking
+7. Add delays or proper timing for hook operations if needed
+8. Use correct Frida API calls and JNI function signatures
+
 ## Example Template
 
 ```javascript
@@ -45,9 +73,10 @@ Java.perform(function() {
 ## Important Rules
 
 - ✅ **DO**: Use MCP tools to analyze open projects
-- ✅ **DO**: Create `temp_generated.js` with Write tool
+- ✅ **DO**: Create/update `temp_generated.js` with Write tool
 - ✅ **DO**: Include specific findings from analysis (addresses, function names)
 - ✅ **DO**: Generate working JavaScript code
+- ✅ **DO**: Fix errors by reading from and updating `temp_generated.js`
 
 - ❌ **DON'T**: Create files with different names
 - ❌ **DON'T**: Just reference existing scripts without creating new ones
